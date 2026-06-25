@@ -5,7 +5,7 @@ namespace App\Http\Requests\User;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 
-class SignupinRequest extends FormRequest
+class SigninRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
@@ -23,10 +23,8 @@ class SignupinRequest extends FormRequest
     public function rules(): array
     {
         return [
-             
             'email' => 'required|email|exists:users,email',
             'password' => 'required|string|min:6|max:10'
-        
         ];
     }
 }
