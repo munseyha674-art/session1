@@ -3,13 +3,18 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\User\ChangePasswordRequest;
+use App\Http\Requests\User\CreatePasswordRequest;
 use App\Http\Requests\User\SendResetPasswordEmailRequest;
 use App\Http\Requests\User\SendVerificationEmailRequest;
 use App\Http\Requests\User\SetNewPasswordRequest;
 use App\Http\Requests\User\SigninRequest;
 use App\Http\Requests\User\SignupRequest;
+use App\Http\Requests\User\UpdateProfileImageRequest;
 use App\Http\Resources\User\UserResource;
 use App\Models\User;
+use App\Services\ImageClassService;
+use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
@@ -61,13 +66,7 @@ class AuthController extends Controller
     function signout(Request $request)
     {
         $user = $request->user();
-
-        // option 1
         $user->currentAccessToken()->delete();
-
-        // option 2
-        $currentToken = $user->currentAccessToken();
-        $user->tokens()->where('id', $currentToken->id)->delete();
 
         return response([
             'message' => 'User signed out.'
@@ -118,18 +117,20 @@ class AuthController extends Controller
 
     function sendResetPasswordEmail(SendResetPasswordEmailRequest $request)
     {
-        $status = Password::sendResetLink(
+        $user = User::where('email', $request->email)->first();
+
+        if (empty($user)) {
+            throw ValidationException::withMessages([
+                'email' => 'Email does not exist.',
+            ]);
+        }
+
+        Password::sendResetLink(
             ['email' => $request->email],
             function ($user, $token) use ($request) {
                 $user->sendPasswordResetNotification($token, $request->callback_url);
             }
         );
-
-        if ($status === Password::RESET_LINK_SENT) {
-            return response([
-                'message' => 'Password reset link sent to your email'
-            ], 200);
-        }
 
         return response([
             'message' => 'Password reset link sent to your email'
@@ -160,6 +161,84 @@ class AuthController extends Controller
 
         return response([
             'message' => 'Password has been reset successfully.'
+        ], 200);
+    }
+
+    function createPassword(CreatePasswordRequest $request)
+    {
+        $user = $request->user();
+        if (!empty($user->password)) {
+            throw ValidationException::withMessages([
+                'new_password' => 'Password is already set.',
+            ]);
+        }
+        $user->password = $request->new_password;
+        $user->save();
+        $user->tokens()->delete();
+        return response([
+            'message' => 'Password created successfully.'
+        ], 200);
+    }
+
+    function changePassword(ChangePasswordRequest $request)
+    {
+        $user = $request->user();
+        if (!Hash::check($request->current_password, $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => 'Current password does not match.',
+            ]);
+        }
+        if ($request->current_password === $request->new_password) {
+            throw ValidationException::withMessages([
+                'new_password' => 'New password must be different from current password.',
+            ]);
+        }
+        $user->password = $request->new_password;
+        $user->save();
+        $user->tokens()->delete();
+        return response([
+            'message' => 'Password changed successfully.'
+        ], 200);
+    }
+
+    function updateProfileImage(UpdateProfileImageRequest $request)
+    {
+        $imageClass = ImageClassService::forUserModel();
+        $user = $request->user();
+        $oldImage = $user->getRawOriginal('profile_image');
+        $newImage = null;
+
+        try {
+            $newImage = $imageClass->store($request->file('profile_image'));
+            $user->profile_image = $newImage;
+            $user->save();
+        } catch (Exception $e) {
+            $imageClass->delete($newImage);
+            throw $e;
+        }
+
+        $imageClass->delete($oldImage);
+
+        return response([
+            'message' => 'User profile image updated successfully.',
+            'profile_image' => $user->profile_image,
+            'profile_thumbnail' => $user->profile_thumbnail,
+        ], 200);
+    }
+
+    function deleteProfileImage(Request $request)
+    {
+        $imageClass = ImageClassService::forUserModel();
+        $user = $request->user();
+        $oldImage = $user->getRawOriginal('profile_image');
+
+        $user->profile_image = null;
+        $user->save();
+
+        $imageClass->delete($oldImage);
+
+        return response([
+            'message' => 'User profile image deleted successfully.',
         ], 200);
     }
 }
